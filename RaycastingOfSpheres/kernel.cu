@@ -23,7 +23,7 @@ __global__ void renderTestKernel(cudaSurfaceObject_t surface, int renderWidth, i
 	surf2Dwrite(bytes, surface, x * sizeof(uint32_t), y);
 }
 
-void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere *spheres, int n_spheres, lightSource *lightSources, int n_lightSources)
+void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere *spheres, int n_spheres, lightSource *lightSources, int n_lightSources, float brightness)
 {
 	int number_of_pixels = renderWidth * renderHeight;
 
@@ -60,14 +60,14 @@ void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int 
 	//cudaMalloc(&deviceLightSources, sizeof(lightSources));
 	//cudaMemcpy(deviceLightSources, &lightSources, sizeof(lightSources), cudaMemcpyHostToDevice);
 
-	renderKernel << <NUMBER_OF_BLOCKS, THREADS_PER_BLOCK >> > (surface, spheres, n_spheres, lightSources, n_lightSources, renderWidth, renderHeight, camera);
+	renderKernel << <NUMBER_OF_BLOCKS, THREADS_PER_BLOCK >> > (surface, spheres, n_spheres, lightSources, n_lightSources, renderWidth, renderHeight, camera, brightness);
 
 	cudaDeviceSynchronize();
 }
 
 
 
-__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera)
+__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera, float brightness)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -99,6 +99,8 @@ __global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int s
 
 	float3 color = make_float3(0.0f, 0.0f, 0.0f);
 
+	int nearestSphereIndex = -1;
+
 	for (int i = 0; i < spheresLength; i++)
 	{
 		if (LineIntersect(spheres[i], rayOrigin, rayDirection, d1, d2))
@@ -107,27 +109,34 @@ __global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int s
 			if (d1 < 0.0f) continue;
 			if (d1 >= t) continue;
 			t = d1;
-			float3 intersectionPoint = rayOrigin + d1 * rayDirection;
-			float3 normal = normalize(intersectionPoint - spheres[i].position);
-			color = make_float3(0.0f, 0.0f, 0.0f);
-			for (int j = 0; j < lightSourcesLength; j++)
-			{
-				float3 lightDirection = normalize(lightSources[j].position - intersectionPoint);
-				float3 reflectionDirection = reflect(-lightDirection, normal);
-				float3 viewDirection = normalize(rayOrigin - intersectionPoint);
-				// Calculate the diffuse component
-				float diffuse = max(dot(lightDirection, normal), 0.0f);
-				// Calculate the specular component
-				float specular = pow(max(dot(reflectionDirection, viewDirection), 0.0f), spheres[i].alpha);
-				// Calculate the color of the pixel
-				color += lightSources[j].intensity * lightSources[j].color * (spheres[i].kd * diffuse + spheres[i].ks * specular) * spheres[i].color;
-			}
-
-			// Calculate the ambient component
-			color += spheres[i].ka * spheres[i].color;
+			nearestSphereIndex = i;
 		}
 	}
-	//color = 0.2f * color;
+
+	if (nearestSphereIndex != -1)
+	{
+		int i = nearestSphereIndex;
+		float3 intersectionPoint = rayOrigin + t * rayDirection;
+		float3 normal = normalize(intersectionPoint - spheres[i].position);
+		color = make_float3(0.0f, 0.0f, 0.0f);
+		for (int j = 0; j < lightSourcesLength; j++)
+		{
+			float3 lightDirection = normalize(lightSources[j].position - intersectionPoint);
+			float3 reflectionDirection = reflect(-lightDirection, normal);
+			float3 viewDirection = normalize(rayOrigin - intersectionPoint);
+			// Calculate the diffuse component
+			float diffuse = max(dot(lightDirection, normal), 0.0f);
+			// Calculate the specular component
+			float specular = pow(max(dot(reflectionDirection, viewDirection), 0.0f), spheres[i].alpha);
+			// Calculate the color of the pixel
+			color += lightSources[j].intensity * lightSources[j].color * (spheres[i].kd * diffuse + spheres[i].ks * specular) * spheres[i].color;
+		}
+
+		// Calculate the ambient component
+		color += spheres[i].ka * spheres[i].color;
+	}
+
+	color = brightness * color;
 
 	color.x = min(color.x, 1.0f);
 	color.y = min(color.y, 1.0f);

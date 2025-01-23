@@ -29,11 +29,17 @@ __host__ __device__ __inline__ float3 camera_to_world_rotate(const camera &camer
     float cp = cosf(pitch);
     float sp = sinf(pitch);
 
-    // Transform the direction vector
+    // Step 1: Apply pitch rotation
+    float3 temp;
+    temp.x = direction.x;
+    temp.y = direction.y * cp - direction.z * sp;
+    temp.z = direction.y * sp + direction.z * cp;
+
+    // Step 2: Apply yaw rotation
     float3 direction_world;
-    direction_world.x = direction.x * cp + direction.y * sy * sp + direction.z * cy * sp;
-    direction_world.y = direction.y * cy - direction.z * sy;
-    direction_world.z = -direction.x * sp + direction.y * sy * cp + direction.z * cy * cp;
+    direction_world.x = temp.x * cy + temp.z * sy;
+    direction_world.y = temp.y;
+    direction_world.z = -temp.x * sy + temp.z * cy;
 
     return direction_world;
 }

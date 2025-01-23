@@ -17,9 +17,19 @@
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void processInput(GLFWwindow *window);
 
-// settings
+// Global Variables
 const unsigned int SCR_WIDTH = 1280;
 const unsigned int SCR_HEIGHT = 720;
+
+unsigned int texture;
+cudaGraphicsResource *m_TextureResource;
+cudaArray *array;
+cudaResourceDesc desc;
+cudaSurfaceObject_t surface;
+
+// Current Width and Height
+int currentWidth = SCR_WIDTH;
+int currentHeight = SCR_HEIGHT;
 
 const int N_SPHERES = 200;
 const int N_LIGHTS = 20;
@@ -168,61 +178,55 @@ int main()
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
 
-    int width, height, nrChannels;
-
-    width = SCR_WIDTH;
-    height = SCR_HEIGHT;
-
-    // load and create a texture 
-    // -------------------------
-    unsigned int texture;
+    // Create texture
     glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture); // all upcoming GL_TEXTURE_2D operations now have effect on this texture object
-    // set the texture wrapping parameters
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);	// set texture wrapping to GL_REPEAT (default wrapping method)
+    glBindTexture(GL_TEXTURE_2D, texture);
+    // Set texture parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // set texture filtering parameters
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    // Allocate texture storage
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, currentWidth, currentHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-
-
-    //unsigned int rbo;
-    //glGenRenderbuffers(1, &rbo);
-    //glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-    //glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-    //glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    //glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
-
-
-    //GLuint fboId = 0;
-    //glGenFramebuffers(1, &fboId);
-    //glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId);
-    //glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-    //    GL_TEXTURE_2D, texture, 0);
-
-    cudaGraphicsResource *m_TextureResource;
-
-    cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
+    // Register the texture with CUDA
+    cudaError_t err = cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
         cudaGraphicsRegisterFlagsSurfaceLoadStore);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to register texture with CUDA: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
 
-    cudaGraphicsMapResources(1, &m_TextureResource);
+    // Map the CUDA resource
+    err = cudaGraphicsMapResources(1, &m_TextureResource, 0);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to map CUDA resource: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
 
-    cudaArray *array;
-    cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0);
+    // Get the CUDA array from the graphics resource
+    err = cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to get mapped array: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
 
-    cudaResourceDesc desc;
+    // Setup CUDA resource descriptor
     memset(&desc, 0, sizeof(cudaResourceDesc));
     desc.resType = cudaResourceTypeArray;
     desc.res.array.array = array;
 
-    cudaSurfaceObject_t surface;
-
-    cudaCreateSurfaceObject(&surface, &desc);
+    // Create a CUDA surface object
+    err = cudaCreateSurfaceObject(&surface, &desc);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to create CUDA surface object: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
 
     srand(time(nullptr));
 
@@ -232,12 +236,13 @@ int main()
     camera.pitch_degrees = 0.0f;
     camera.yaw_degrees = 0.0f;
 
+	float brightness = 1.0f;
     
     sphere spheres[N_SPHERES];
     lightSource lightSources[N_LIGHTS];
     for (int i = 0; i < N_SPHERES; i++)
     {
-        spheres[i] = random_sphere(-5.0f, 5.0f, 0.1f, 0.15f);	
+        spheres[i] = random_sphere(-5.0f, 5.0f, 0.1f, 0.4f);	
     }
     for (int i = 0; i < N_LIGHTS; i++)
     {
@@ -263,7 +268,7 @@ int main()
         // -----
         processInput(window);
 
-        renderTestKernelLauncher(surface, width, height, camera, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS);
+        renderTestKernelLauncher(surface, currentWidth, currentHeight, camera, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS, brightness);
         //cudaGraphicsUnmapResources(1, &m_TextureResource);
 
         // render
@@ -285,7 +290,7 @@ int main()
 
         // Create GUI
         ImGui::SetNextWindowPos(ImVec2(16.0f, 16.0f), ImGuiCond_Once);
-		ImGui::SetNextWindowSize(ImVec2(320.0f, 200.0f), ImGuiCond_Once);
+		ImGui::SetNextWindowSize(ImVec2(320.0f, 240.0f), ImGuiCond_Once);
         ImGui::Begin("Simple GUI");
 
         ImGui::Text("Frame rate: %.1f FPS", ImGui::GetIO().Framerate);
@@ -297,6 +302,7 @@ int main()
 		ImGui::SliderFloat("Camera Pitch", &camera.pitch_degrees, -90.0f, 90.0f);
 		ImGui::SliderFloat("Camera Yaw", &camera.yaw_degrees, -180.0f, 180.0f);
         ImGui::SliderFloat("Camera FOV", &camera.fov_degrees, 30.0f, 150.0f);
+        ImGui::SliderFloat("Brightness", &brightness, 0.0f, 1.0f);
 
         ImGui::SetCursorPosX(0.0f);
         ImGui::SetCursorPosY(0.0f);
@@ -345,7 +351,75 @@ void processInput(GLFWwindow *window)
 // ---------------------------------------------------------------------------------------------
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
 {
-    // make sure the viewport matches the new window dimensions; note that width and 
-    // height will be significantly larger than specified on retina displays.
+    // Update the OpenGL viewport
     glViewport(0, 0, width, height);
+
+    // If the window size hasn't changed, no need to update
+    if (width == currentWidth && height == currentHeight)
+        return;
+
+    // Update current width and height
+    currentWidth = width;
+    currentHeight = height;
+
+    // Unmap and unregister the existing CUDA resource
+    cudaGraphicsUnmapResources(1, &m_TextureResource, 0);
+    cudaGraphicsUnregisterResource(m_TextureResource);
+
+    // Delete the existing texture
+    glDeleteTextures(1, &texture);
+
+    // Create a new texture with updated size
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    // Set texture wrapping parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Set texture filtering parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+
+    // Allocate texture storage with the new dimensions
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Register the new texture with CUDA
+    cudaError_t err = cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
+        cudaGraphicsRegisterFlagsSurfaceLoadStore);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to register texture with CUDA: " << cudaGetErrorString(err) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Map the CUDA resource
+    err = cudaGraphicsMapResources(1, &m_TextureResource, 0);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to map CUDA resource: " << cudaGetErrorString(err) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the CUDA array from the graphics resource
+    err = cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to get mapped array: " << cudaGetErrorString(err) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Setup CUDA resource descriptor
+    memset(&desc, 0, sizeof(cudaResourceDesc));
+    desc.resType = cudaResourceTypeArray;
+    desc.res.array.array = array;
+
+    // Create a new CUDA surface object
+    err = cudaCreateSurfaceObject(&surface, &desc);
+    if (err != cudaSuccess)
+    {
+        std::cerr << "Failed to create CUDA surface object: " << cudaGetErrorString(err) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::cout << "Framebuffer resized to " << width << "x" << height << std::endl;
 }
