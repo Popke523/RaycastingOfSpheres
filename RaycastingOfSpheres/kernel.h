@@ -6,6 +6,17 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#define CHECK_CUDA_ERR(x)                                         \
+    do {                                                          \
+        cudaError_t err = x;                                      \
+        if (err != cudaSuccess) {                                 \
+            fprintf(stderr,                                       \
+                    "CUDA Error at %s:%d -> %s\n",                \
+                    __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                   \
+        }                                                         \
+    } while (0)
+
 #include <cuda_runtime.h>
 #include <surface_functions.h>
 #include "device_launch_parameters.h"

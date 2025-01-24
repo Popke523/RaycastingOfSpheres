@@ -2,6 +2,8 @@
 
 #include "cuda_runtime.h"
 
+#include <glm/glm.hpp>
+
 __host__ __device__ __inline__ float3 operator+(const float3 &a, const float3 &b)
 {
 	return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
@@ -60,4 +62,18 @@ __host__ __device__ __inline__ float3 operator+=(float3 &a, const float3 &b)
 {
 	a = a + b;
 	return a;
+}
+
+__host__ __device__ __inline__ float3 operator-=(float3 &a, const float3 &b)
+{
+	a = a - b;
+	return a;
+}
+
+__host__ __device__ __inline__ float3 cross(const float3 &a, const float3 &b)
+{
+	glm::vec3 a_glm = glm::vec3(a.x, a.y, a.z);
+	glm::vec3 b_glm = glm::vec3(b.x, b.y, b.z);
+	glm::vec3 result = glm::cross(a_glm, b_glm);
+	return make_float3(result.x, result.y, result.z);
 }

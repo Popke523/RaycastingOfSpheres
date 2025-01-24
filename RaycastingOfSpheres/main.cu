@@ -5,6 +5,9 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 #include "device_launch_parameters.h"
@@ -13,6 +16,17 @@
 #include <iostream>
 
 #include "random_objects_generator.h"
+
+#define CHECK_CUDA_ERR(x)                                         \
+    do {                                                          \
+        cudaError_t err = x;                                      \
+        if (err != cudaSuccess) {                                 \
+            fprintf(stderr,                                       \
+                    "CUDA Error at %s:%d -> %s\n",                \
+                    __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                   \
+        }                                                         \
+    } while (0)
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void processInput(GLFWwindow *window);
@@ -27,12 +41,14 @@ cudaArray *array;
 cudaResourceDesc desc;
 cudaSurfaceObject_t surface;
 
+camera cam;
+
 // Current Width and Height
 int currentWidth = SCR_WIDTH;
 int currentHeight = SCR_HEIGHT;
 
-const int N_SPHERES = 200;
-const int N_LIGHTS = 20;
+const int N_SPHERES = 100;
+const int N_LIGHTS = 10;
 
 const char *vertexShaderSource = R"(
 #version 330 core
@@ -191,29 +207,13 @@ int main()
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, currentWidth, currentHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     // Register the texture with CUDA
-    cudaError_t err = cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
-        cudaGraphicsRegisterFlagsSurfaceLoadStore);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to register texture with CUDA: " << cudaGetErrorString(err) << std::endl;
-        return -1;
-    }
+    CHECK_CUDA_ERR(cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
+        cudaGraphicsRegisterFlagsSurfaceLoadStore));
 
     // Map the CUDA resource
-    err = cudaGraphicsMapResources(1, &m_TextureResource, 0);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to map CUDA resource: " << cudaGetErrorString(err) << std::endl;
-        return -1;
-    }
+    CHECK_CUDA_ERR(cudaGraphicsMapResources(1, &m_TextureResource, 0));
 
-    // Get the CUDA array from the graphics resource
-    err = cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to get mapped array: " << cudaGetErrorString(err) << std::endl;
-        return -1;
-    }
+    CHECK_CUDA_ERR(cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0));
 
     // Setup CUDA resource descriptor
     memset(&desc, 0, sizeof(cudaResourceDesc));
@@ -221,20 +221,14 @@ int main()
     desc.res.array.array = array;
 
     // Create a CUDA surface object
-    err = cudaCreateSurfaceObject(&surface, &desc);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to create CUDA surface object: " << cudaGetErrorString(err) << std::endl;
-        return -1;
-    }
-
+    CHECK_CUDA_ERR(cudaCreateSurfaceObject(&surface, &desc));
+   
     srand(time(nullptr));
 
-    camera camera;
-    camera.position = make_float3(0.0f, 0.0f, 10.0f);
-    camera.fov_degrees = 90.0f;
-    camera.pitch_degrees = 0.0f;
-    camera.yaw_degrees = 0.0f;
+    cam.position = make_float3(0.0f, 0.0f, 10.0f);
+    cam.fov_degrees = 90.0f;
+    cam.pitch_degrees = 0.0f;
+    cam.yaw_degrees = 0.0f;
 
 	float brightness = 1.0f;
     
@@ -257,6 +251,21 @@ int main()
     cudaMalloc(&deviceLightSources, sizeof(lightSources));
 	cudaMemcpy(deviceLightSources, &lightSources, sizeof(lightSources), cudaMemcpyHostToDevice);
 
+    glm::mat4 lightRotations[N_LIGHTS];
+	for (int i = 0; i < N_LIGHTS; i++)
+	{
+		float yaw = random_float(-0.5f, 0.5f);
+		float pitch = random_float(-0.5f, 0.5f);
+		float roll = random_float(-0.5f, 0.5f);
+
+        glm::mat4 rotationMatrix = glm::mat4(1.0f);
+		rotationMatrix = glm::rotate(rotationMatrix, glm::radians(yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+		rotationMatrix = glm::rotate(rotationMatrix, glm::radians(pitch), glm::vec3(1.0f, 0.0f, 0.0f));
+		rotationMatrix = glm::rotate(rotationMatrix, glm::radians(roll), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        lightRotations[i] = rotationMatrix;
+	}
+
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -268,7 +277,7 @@ int main()
         // -----
         processInput(window);
 
-        renderTestKernelLauncher(surface, currentWidth, currentHeight, camera, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS, brightness);
+        renderTestKernelLauncher(surface, currentWidth, currentHeight, cam, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS, brightness);
         //cudaGraphicsUnmapResources(1, &m_TextureResource);
 
         // render
@@ -296,12 +305,12 @@ int main()
         ImGui::Text("Frame rate: %.1f FPS", ImGui::GetIO().Framerate);
 
 		// imgui sliders for camera settings
-		ImGui::SliderFloat("Camera X", &camera.position.x, -10.0f, 10.0f);
-		ImGui::SliderFloat("Camera Y", &camera.position.y, -10.0f, 10.0f);
-		ImGui::SliderFloat("Camera Z", &camera.position.z, -10.0f, 10.0f);
-		ImGui::SliderFloat("Camera Pitch", &camera.pitch_degrees, -90.0f, 90.0f);
-		ImGui::SliderFloat("Camera Yaw", &camera.yaw_degrees, -180.0f, 180.0f);
-        ImGui::SliderFloat("Camera FOV", &camera.fov_degrees, 30.0f, 150.0f);
+		ImGui::SliderFloat("Camera X", &cam.position.x, -10.0f, 10.0f);
+		ImGui::SliderFloat("Camera Y", &cam.position.y, -10.0f, 10.0f);
+		ImGui::SliderFloat("Camera Z", &cam.position.z, -10.0f, 10.0f);
+		ImGui::SliderFloat("Camera Pitch", &cam.pitch_degrees, -90.0f, 90.0f);
+		ImGui::SliderFloat("Camera Yaw", &cam.yaw_degrees, -180.0f, 180.0f);
+        ImGui::SliderFloat("Camera FOV", &cam.fov_degrees, 30.0f, 150.0f);
         ImGui::SliderFloat("Brightness", &brightness, 0.0f, 1.0f);
 
         ImGui::SetCursorPosX(0.0f);
@@ -325,13 +334,24 @@ int main()
         // -------------------------------------------------------------------------------
         glfwSwapBuffers(window);
         glfwPollEvents();
+
+        for(int i = 0; i < N_LIGHTS; i++)
+		{
+			glm::vec3 position = glm::vec3(lightSources[i].position.x, lightSources[i].position.y, lightSources[i].position.z);
+            position = glm::vec3(lightRotations[i] * glm::vec4(position, 1.0f));
+            lightSources[i].position = make_float3(position.x, position.y, position.z);
+		}
+
+		cudaMemcpy(deviceLightSources, lightSources, sizeof(lightSources), cudaMemcpyHostToDevice);
+
     }
 
-    //// optional: de-allocate all resources once they've outlived their purpose:
-    //// ------------------------------------------------------------------------
-    //glDeleteVertexArrays(1, &VAO);
-    //glDeleteBuffers(1, &VBO);
-    //glDeleteBuffers(1, &EBO);
+    CHECK_CUDA_ERR(cudaGraphicsUnmapResources(1, &m_TextureResource, 0));
+    CHECK_CUDA_ERR(cudaGraphicsUnregisterResource(m_TextureResource));
+
+	// Cleanup
+	CHECK_CUDA_ERR(cudaFree(deviceSpheres));
+    CHECK_CUDA_ERR(cudaFree(deviceLightSources));
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
@@ -345,6 +365,37 @@ void processInput(GLFWwindow *window)
 {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
+
+    float yaw = glm::radians(cam.yaw_degrees);
+    float pitch = glm::radians(cam.pitch_degrees);
+    float3 front;
+	front.x = -sin(yaw) * cos(pitch);
+	front.y = sin(pitch);
+	front.z = -cos(yaw) * cos(pitch);
+
+    float cameraSpeed = 0.1f;
+    float3 right = normalize(cross(front, make_float3(0.0f, 1.0f, 0.0f)));
+
+
+    // Arrow keys for rotation
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+        cam.pitch_degrees += cameraSpeed * 10.0f; // Adjust rotation speed
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+        cam.pitch_degrees -= cameraSpeed * 10.0f;
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+        cam.yaw_degrees += cameraSpeed * 10.0f;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+        cam.yaw_degrees -= cameraSpeed * 10.0f;
+
+    // WASD for movement
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cam.position += cameraSpeed * front;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cam.position -= cameraSpeed * front;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        cam.position -= right * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        cam.position += right * cameraSpeed;
 }
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
@@ -363,8 +414,8 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height)
     currentHeight = height;
 
     // Unmap and unregister the existing CUDA resource
-    cudaGraphicsUnmapResources(1, &m_TextureResource, 0);
-    cudaGraphicsUnregisterResource(m_TextureResource);
+    CHECK_CUDA_ERR(cudaGraphicsUnmapResources(1, &m_TextureResource, 0));
+    CHECK_CUDA_ERR(cudaGraphicsUnregisterResource(m_TextureResource));
 
     // Delete the existing texture
     glDeleteTextures(1, &texture);
@@ -384,29 +435,15 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     // Register the new texture with CUDA
-    cudaError_t err = cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
-        cudaGraphicsRegisterFlagsSurfaceLoadStore);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to register texture with CUDA: " << cudaGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    CHECK_CUDA_ERR(cudaGraphicsGLRegisterImage(&m_TextureResource, texture, GL_TEXTURE_2D,
+        cudaGraphicsRegisterFlagsSurfaceLoadStore));
 
     // Map the CUDA resource
-    err = cudaGraphicsMapResources(1, &m_TextureResource, 0);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to map CUDA resource: " << cudaGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    CHECK_CUDA_ERR(cudaGraphicsMapResources(1, &m_TextureResource, 0));
+
 
     // Get the CUDA array from the graphics resource
-    err = cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to get mapped array: " << cudaGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    CHECK_CUDA_ERR(cudaGraphicsSubResourceGetMappedArray(&array, m_TextureResource, 0, 0));
 
     // Setup CUDA resource descriptor
     memset(&desc, 0, sizeof(cudaResourceDesc));
@@ -414,12 +451,7 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height)
     desc.res.array.array = array;
 
     // Create a new CUDA surface object
-    err = cudaCreateSurfaceObject(&surface, &desc);
-    if (err != cudaSuccess)
-    {
-        std::cerr << "Failed to create CUDA surface object: " << cudaGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    CHECK_CUDA_ERR(cudaCreateSurfaceObject(&surface, &desc));
 
     std::cout << "Framebuffer resized to " << width << "x" << height << std::endl;
 }
