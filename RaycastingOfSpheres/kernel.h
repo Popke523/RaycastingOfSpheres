@@ -33,6 +33,6 @@ template<typename T> struct vec4
 
 __global__ void renderTestKernel(cudaSurfaceObject_t surface, int renderWidth, int renderHeight);
 
-void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere * spheres, int n_spheres, lightSource * lightSources, int n_lightSources, float brightness);
+void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere * spheres, int n_spheres, lightSource * lightSources, int n_lightSources, float brightness, float kd, float ks);
 
-__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera, float brightness);
+__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera, float brightness, float kd, float ks);

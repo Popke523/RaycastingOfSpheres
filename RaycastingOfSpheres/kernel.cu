@@ -23,21 +23,21 @@ __global__ void renderTestKernel(cudaSurfaceObject_t surface, int renderWidth, i
 	surf2Dwrite(bytes, surface, x * sizeof(uint32_t), y);
 }
 
-void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere *spheres, int n_spheres, lightSource *lightSources, int n_lightSources, float brightness)
+void renderTestKernelLauncher(cudaSurfaceObject_t surface, int renderWidth, int renderHeight, camera camera, sphere *spheres, int n_spheres, lightSource *lightSources, int n_lightSources, float brightness, float kd, float ks)
 {
 	int number_of_pixels = renderWidth * renderHeight;
 
 	int THREADS_PER_BLOCK = number_of_pixels > 1024 ? 1024 : number_of_pixels;
 	int NUMBER_OF_BLOCKS = (number_of_pixels + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-	renderKernel << <NUMBER_OF_BLOCKS, THREADS_PER_BLOCK >> > (surface, spheres, n_spheres, lightSources, n_lightSources, renderWidth, renderHeight, camera, brightness);
+	renderKernel << <NUMBER_OF_BLOCKS, THREADS_PER_BLOCK >> > (surface, spheres, n_spheres, lightSources, n_lightSources, renderWidth, renderHeight, camera, brightness, kd, ks);
 
 	CHECK_CUDA_ERR(cudaDeviceSynchronize());
 }
 
 
 
-__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera, float brightness)
+__global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int spheresLength, lightSource *lightSources, int lightSourcesLength, int renderWidth, int renderHeight, camera camera, float brightness, float kd, float ks)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -89,7 +89,7 @@ __global__ void renderKernel(cudaSurfaceObject_t surface, sphere *spheres, int s
 			float3 viewDirection = normalize(rayOrigin - intersectionPoint);
 			float diffuse = max(dot(lightDirection, normal), 0.0f);
 			float specular = pow(max(dot(reflectionDirection, viewDirection), 0.0f), spheres[i].alpha);
-			color += lightSources[j].intensity * lightSources[j].color * (spheres[i].kd * diffuse + spheres[i].ks * specular) * spheres[i].color;
+			color += lightSources[j].intensity * lightSources[j].color * (spheres[i].kd * diffuse * kd + spheres[i].ks * specular * ks) * spheres[i].color;
 		}
 
 		color += spheres[i].ka * spheres[i].color;

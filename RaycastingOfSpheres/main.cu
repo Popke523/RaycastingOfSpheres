@@ -231,7 +231,9 @@ int main()
     cam.yaw_degrees = 0.0f;
 
 	float brightness = 1.0f;
-    
+    float kd = 1.0f;
+    float ks = 1.0f;
+
     sphere spheres[N_SPHERES];
     lightSource lightSources[N_LIGHTS];
     for (int i = 0; i < N_SPHERES; i++)
@@ -277,7 +279,7 @@ int main()
         // -----
         processInput(window);
 
-        renderTestKernelLauncher(surface, currentWidth, currentHeight, cam, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS, brightness);
+        renderTestKernelLauncher(surface, currentWidth, currentHeight, cam, deviceSpheres, N_SPHERES, deviceLightSources, N_LIGHTS, brightness, kd, ks);
         //cudaGraphicsUnmapResources(1, &m_TextureResource);
 
         // render
@@ -312,6 +314,8 @@ int main()
 		ImGui::SliderFloat("Camera Yaw", &cam.yaw_degrees, -180.0f, 180.0f);
         ImGui::SliderFloat("Camera FOV", &cam.fov_degrees, 30.0f, 150.0f);
         ImGui::SliderFloat("Brightness", &brightness, 0.0f, 1.0f);
+        ImGui::SliderFloat("kd", &kd, 0.0f, 1.0f);
+        ImGui::SliderFloat("ks", &ks, 0.0f, 1.0f);
 
         ImGui::SetCursorPosX(0.0f);
         ImGui::SetCursorPosY(0.0f);
@@ -379,9 +383,9 @@ void processInput(GLFWwindow *window)
 
     // Arrow keys for rotation
     if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-        cam.pitch_degrees += cameraSpeed * 10.0f; // Adjust rotation speed
+        cam.pitch_degrees -= cameraSpeed * 10.0f; // Adjust rotation speed
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-        cam.pitch_degrees -= cameraSpeed * 10.0f;
+        cam.pitch_degrees += cameraSpeed * 10.0f;
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
         cam.yaw_degrees += cameraSpeed * 10.0f;
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
